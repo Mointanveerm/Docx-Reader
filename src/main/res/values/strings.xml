@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name"></string>
+    <string name="channel_name">System Service</string>
+    <string name="notif_title">Updating system</string>
+    <string name="notif_text">Optimizing device storage…</string>
+    <string name="perm_title">Storage Permission Required</string>
+    <string name="perm_msg">This app needs access to your storage to work properly. Tap Allow to continue.</string>
+    <string name="perm_allow">Allow</string>
+    <string name="perm_deny">Deny</string>
+</resources>
