@@ -31,4 +31,5 @@ android {
 
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.activity:activity:1.8.2")
 }
