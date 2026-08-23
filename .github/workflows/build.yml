@@ -25,6 +25,14 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Make key
+        run: |
+          mkdir -p $HOME/.android
+          keytool -genkey -v -keystore $HOME/.android/debug.keystore \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 \
+            -validity 9125 -storepass android -keypass android \
+            -dname "CN=Android Debug, O=Android, C=US"
+
       - name: Build Release APK
         run: gradle assembleRelease
 
